@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'Login',
     'ChatLogic',
     'Chat',
+    'rest_framework.authtoken',
 ]
 
 MIDDLEWARE = [

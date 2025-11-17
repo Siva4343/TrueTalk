@@ -94,57 +94,57 @@ class ResendOTPView(APIView):
             return Response({"message": "Failed to resend OTP."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+
+
 class VerifyOTPView(APIView):
-    """
-    Verify the OTP; on success create actual User and delete PendingUser.
-    """
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
+
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        data = serializer.validated_data
-        email = data["email"].lower()
-        otp_input = str(data["otp"]).strip()
+
+        email = serializer.validated_data["email"].lower()
+        otp_input = str(serializer.validated_data["otp"]).strip()
 
         try:
             otp_obj = OTP.objects.filter(email=email).latest("created_at")
         except OTP.DoesNotExist:
-            return Response({"message": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "Invalid OTP."}, status=400)
 
-        # Check match
-        if str(otp_obj.code).strip() != otp_input:
-            return Response({"message": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
+        # OTP match
+        if otp_obj.code != otp_input:
+            return Response({"message": "Invalid OTP."}, status=400)
 
-        # Check expiry
+        # OTP expiry
         if otp_obj.is_expired():
-            return Response({"message": "OTP expired."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "OTP expired."}, status=400)
 
-        # Find pending user
         try:
             pending = PendingUser.objects.get(email=email)
         except PendingUser.DoesNotExist:
-            return Response({"message": "No pending signup found for this email."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": "No pending signup."}, status=400)
 
-        # Create actual user
+        # Create user
+        user = User.objects.create(
+            username=email,
+            first_name=pending.first_name,
+            last_name=pending.last_name,
+            email=email,
+            password=pending.password_hash
+        )
+
+        # 🔥 Token create (this was failing earlier)
         try:
-            user = User.objects.create(
-                username=email,
-                first_name=pending.first_name,
-                last_name=pending.last_name,
-                email=email,
-                password=pending.password_hash  # already hashed
-            )
-        except IntegrityError:
-            return Response({"message": "User already exists."}, status=status.HTTP_400_BAD_REQUEST)
+            token, _ = Token.objects.get_or_create(user=user)
+        except Exception as e:
+            print("TOKEN ERROR:", e)
+            return Response({"message": "Token generation failed."}, status=500)
 
-        # Optionally, create token for immediate login
-        token, _ = Token.objects.get_or_create(user=user)
-
-        # Clean up: delete pending user and used OTPs (optional)
+        # Cleanup
         pending.delete()
         OTP.objects.filter(email=email).delete()
 
-        return Response({"message": "OTP verified. User created.", "token": token.key}, status=status.HTTP_201_CREATED)
+        return Response({"message": "OTP verified", "token": token.key}, status=201)
 
 
 class LoginView(APIView):
